@@ -42,16 +42,11 @@ def get_index_dtype(arrays=(), maxval=None, check_contents=False):
     Returns:
         dtype: Suitable index data type (int32 or int64)
     """
-    sizes = () if maxval is None else (maxval,)
-    if isinstance(arrays, cupy.ndarray):
-        arrays = (arrays,)
-    coerced = []
-    for arr in arrays:
-        if arr is None:
-            continue
-        coerced.append(cupy.asarray(arr))
+    if maxval is None:
+        return choose_index_dtype(
+            arrays=arrays, check_contents=check_contents)
     return choose_index_dtype(
-        *sizes, arrays=coerced, check_contents=check_contents)
+        maxval, arrays=arrays, check_contents=check_contents)
 
 
 def validateaxis(axis):

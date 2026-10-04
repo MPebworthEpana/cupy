@@ -285,11 +285,12 @@ class _compressed_sparse_matrix(sparse_data._data_matrix,
         sparse_data._data_matrix.__init__(self, data)
 
         infer_max = len(data)
+        idx_max = None
         if shape is not None:
             infer_max = max(infer_max, int(shape[0]), int(shape[1]))
         elif len(indices):
-            infer_max = max(
-                infer_max, int(indices.max()) + 1, len(indptr) - 1)
+            idx_max = int(indices.max())
+            infer_max = max(infer_max, idx_max + 1, len(indptr) - 1)
         else:
             infer_max = max(infer_max, len(indptr) - 1)
         idx_dtype = _sputils.get_index_dtype(
@@ -301,7 +302,9 @@ class _compressed_sparse_matrix(sparse_data._data_matrix,
         self.indptr = indptr.astype(idx_dtype, copy=copy)
 
         if shape is None:
-            shape = self._swap(len(indptr) - 1, int(indices.max()) + 1)
+            if idx_max is None:
+                idx_max = int(indices.max())
+            shape = self._swap(len(indptr) - 1, idx_max + 1)
 
         major, minor = self._swap(*shape)
         if len(indptr) != major + 1:

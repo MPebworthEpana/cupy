@@ -18,6 +18,10 @@ import cupy._core as _core
 from cupy.cuda import memory as _memory
 import numpy
 
+# Avoid importing _index_width on the common small-array path.
+cdef enum:
+    _INDEX32_MAX = 2147483647
+
 
 ###############################################################################
 # Const
@@ -375,14 +379,15 @@ cpdef bint _cub_device_segmented_reduce_axis_compatible(
 
 cdef bint can_use_device_reduce(
         _ndarray_base x, int op, tuple out_axis, dtype=None) except*:
-    from cupy._core._index_width import INT32_MAX, get_index_width_mode
     if not (out_axis is () and _cub_reduce_dtype_compatible(x.dtype, op, dtype)):
         return False
-    # Argmin/argmax still store a 32-bit CUB key.
-    if op in (CUPY_CUB_ARGMIN, CUPY_CUB_ARGMAX) and x.size > INT32_MAX:
-        return False
-    if x.size > INT32_MAX and get_index_width_mode() == '32':
-        return False
+    if x.size > _INDEX32_MAX:
+        # Argmin/argmax still store a 32-bit CUB key.
+        if op in (CUPY_CUB_ARGMIN, CUPY_CUB_ARGMAX):
+            return False
+        from cupy._core._index_width import get_index_width_mode
+        if get_index_width_mode() == '32':
+            return False
     return True
 
 
@@ -515,9 +520,6 @@ cpdef cub_scan(_ndarray_base arr, op):
 
     If the specified scan is not possible, None is returned.
     """
-    from cupy._core._index_width import (
-        INT32_MAX, IndexWidthOverflowError, get_index_width_mode)
-
     if op not in (CUPY_CUB_CUMSUM, CUPY_CUB_CUMPROD):
         return None
 
@@ -527,9 +529,12 @@ cpdef cub_scan(_ndarray_base arr, op):
         # https://github.com/cupy/cupy/pull/2919#issuecomment-574633590
         return None
 
-    if arr.size > INT32_MAX and get_index_width_mode() == '32':
-        raise IndexWidthOverflowError(
-            'Scan size exceeds int32.max but CUPY_INDEX_WIDTH=32')
+    if arr.size > _INDEX32_MAX:
+        from cupy._core._index_width import (
+            IndexWidthOverflowError, get_index_width_mode)
+        if get_index_width_mode() == '32':
+            raise IndexWidthOverflowError(
+                'Scan size exceeds int32.max but CUPY_INDEX_WIDTH=32')
 
     cdef int dev_id = device.get_device_id()
     if x_dtype in _cub_support_dtype(False, dev_id):

@@ -4,7 +4,6 @@ import sys
 import numpy
 
 import cupy
-from cupy._core._index_width import index_kernel_ctype
 from cupy._core._reduction import create_reduction_func
 from cupy._core._kernel import create_ufunc, _get_warpsize
 from cupy._core._scalar import get_typename
@@ -663,7 +662,18 @@ cdef _ndarray_base _batch_scan_op(
         blocks_per_batch = (batch_size - 1) // block_size + 1
         padded_bs = block_size * blocks_per_batch
     padded_size = a.size // batch_size * padded_bs
-    idx_t = index_kernel_ctype(None, a.size, batch_size, padded_size)
+    # Kernel index width follows launch sizes only. force64 must not compile a
+    # second 64-bit kernel when every index already fits in int32.
+    if (a.size > 2147483647 or padded_size > 2147483647
+            or batch_size > 2147483647):
+        from cupy._core._index_width import (
+            IndexWidthOverflowError, get_index_width_mode)
+        if get_index_width_mode() == '32':
+            raise IndexWidthOverflowError(
+                'Scan size exceeds int32.max but CUPY_INDEX_WIDTH=32')
+        idx_t = 'long long'
+    else:
+        idx_t = 'int'
 
     cdef int src_cont = int(a.flags.c_contiguous)
     cdef int out_cont = int(out.flags.c_contiguous)

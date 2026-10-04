@@ -631,9 +631,11 @@ __device__ inline long long get_row_id(
         long long i, long long min, long long max, const I *indptr) {
     long long row = (min + max) / 2;
     while (min < max) {
-        if (i < static_cast<long long>(indptr[row])) {
+        I start = indptr[row];
+        I stop = indptr[row + 1];
+        if (i < start) {
             max = row - 1;
-        } else if (i >= static_cast<long long>(indptr[row + 1])) {
+        } else if (i >= stop) {
             min = row + 1;
         } else {
             break;
@@ -648,11 +650,11 @@ _FIND_INDEX_HOLDING_COL_IN_ROW_ = '''
 template <typename I>
 __device__ inline long long find_index_holding_col_in_row(
         long long row, long long col, const I *indptr, const I *indices) {
-    long long j_min = static_cast<long long>(indptr[row]);
+    long long j_min = indptr[row];
     long long j_max = static_cast<long long>(indptr[row + 1]) - 1;
     while (j_min <= j_max) {
         long long j = (j_min + j_max) / 2;
-        long long j_col = static_cast<long long>(indices[j]);
+        I j_col = indices[j];
         if (j_col == col) {
             return j;
         } else if (j_col < col) {

@@ -33,6 +33,17 @@ def iw(monkeypatch):
     return mod, _set
 
 
+class _BoomArray:
+    dtype = numpy.int64
+    size = 1
+
+    def max(self):
+        raise AssertionError('contents should not be inspected')
+
+    def min(self):
+        raise AssertionError('contents should not be inspected')
+
+
 class TestChooseIndexDtype:
 
     def test_auto_small_is_int32(self, iw):
@@ -79,10 +90,27 @@ class TestChooseIndexDtype:
         assert mod.choose_index_dtype(
             arrays=(wide,), check_contents=True) == numpy.int64
 
-    def test_index_kernel_ctype(self, iw):
+    def test_skips_contents_when_size_needs_int64(self, iw):
         mod, _set = iw
         _set('auto')
-        assert mod.index_kernel_ctype(None, 8) == 'int'
-        assert mod.index_kernel_ctype(None, mod.INT32_MAX + 1) == 'long long'
+        assert mod.choose_index_dtype(
+            mod.INT32_MAX + 1,
+            arrays=(_BoomArray(),),
+            check_contents=True,
+        ) == numpy.int64
+
+    def test_force64_skips_contents(self, iw):
+        mod, _set = iw
         _set('64')
-        assert mod.index_kernel_ctype(None, 8) == 'long long'
+        assert mod.choose_index_dtype(
+            arrays=(_BoomArray(),), check_contents=True) == numpy.int64
+
+    def test_int32_dtype_skips_contents(self, iw):
+        mod, _set = iw
+        _set('auto')
+
+        class _Int32Boom(_BoomArray):
+            dtype = numpy.int32
+
+        assert mod.choose_index_dtype(
+            arrays=(_Int32Boom(),), check_contents=True) == numpy.int32

@@ -147,11 +147,16 @@ class coo_matrix(sparse_data._data_matrix):
                 ' are supported')
 
         data = data.astype(dtype, copy=copy)
-        infer_max = len(data)
-        if shape is not None:
-            infer_max = max(infer_max, int(shape[0]), int(shape[1]))
-        elif len(row) and len(col):
-            infer_max = max(infer_max, int(row.max()) + 1, int(col.max()) + 1)
+        row_max = col_max = None
+        if shape is None:
+            if len(row) == 0 or len(col) == 0:
+                raise ValueError(
+                    'cannot infer dimensions from zero sized index arrays')
+            row_max = int(row.max())
+            col_max = int(col.max())
+            infer_max = max(len(data), row_max + 1, col_max + 1)
+        else:
+            infer_max = max(len(data), int(shape[0]), int(shape[1]))
         idx_dtype = _sputils.get_index_dtype(
             arrays=(row, col),
             maxval=infer_max,
@@ -161,10 +166,7 @@ class coo_matrix(sparse_data._data_matrix):
         col = col.astype(idx_dtype, copy=copy)
 
         if shape is None:
-            if len(row) == 0 or len(col) == 0:
-                raise ValueError(
-                    'cannot infer dimensions from zero sized index arrays')
-            shape = (int(row.max()) + 1, int(col.max()) + 1)
+            shape = (row_max + 1, col_max + 1)
 
         if len(data) > 0:
             if row.max() >= shape[0]:

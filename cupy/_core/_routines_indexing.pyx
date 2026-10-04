@@ -6,6 +6,7 @@ import numpy
 import cupy
 import cupy._core.core as core
 from cupy.exceptions import AxisError
+from cupy._core._index_width import choose_index_dtype
 from cupy._core._kernel import ElementwiseKernel, _get_warpsize
 from cupy._core._ufuncs import elementwise_copy
 
@@ -89,10 +90,7 @@ cpdef _ndarray_base _ndarray_argwhere(_ndarray_base self):
 
         # Get number of True in the mask to determine the shape of the array
         # after masking.
-        if nonzero.size <= 2 ** 31 - 1:
-            scan_dtype = numpy.int32
-        else:
-            scan_dtype = numpy_int64
+        scan_dtype = choose_index_dtype(nonzero.size)
 
         chunk_size = 512
 
@@ -758,7 +756,7 @@ cdef _check_mask_shape(_ndarray_base a, _ndarray_base mask, Py_ssize_t axis):
 cpdef _prepare_mask_indexing_single(
         _ndarray_base a, _ndarray_base mask, Py_ssize_t axis):
     cdef _ndarray_base mask_scanned, mask_br
-    cdef int n_true
+    cdef Py_ssize_t n_true
     cdef tuple lshape, rshape, a_shape
     cdef Py_ssize_t a_ndim, mask_ndim
 
@@ -775,10 +773,7 @@ cpdef _prepare_mask_indexing_single(
 
     # Get number of True in the mask to determine the shape of the array
     # after masking.
-    if mask.size <= 2 ** 31 - 1:
-        mask_type = numpy.int32
-    else:
-        mask_type = numpy.int64
+    mask_type = choose_index_dtype(mask.size)
     op = _math.scan_op.SCAN_SUM
 
     # starts with 1
@@ -801,10 +796,7 @@ cpdef _prepare_mask_indexing_single(
         raise IndexError('too many indices for array')
 
     mask = _manipulation.broadcast_to(mask, a_shape)
-    if mask.size <= 2 ** 31 - 1:
-        mask_type = numpy.int32
-    else:
-        mask_type = numpy.int64
+    mask_type = choose_index_dtype(mask.size)
     mask_scanned = _manipulation._reshape(
         _math.scan(mask.ravel(), op=_math.scan_op.SCAN_SUM, dtype=mask_type),
         mask._shape)

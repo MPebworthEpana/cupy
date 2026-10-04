@@ -3,7 +3,7 @@
 """Wrapper of CUB functions for CuPy API."""
 
 from cpython cimport sequence
-from libc.stdint cimport intptr_t
+from libc.stdint cimport intptr_t, int64_t
 
 from cupy_backends.cuda.api cimport runtime
 from cupy._core.core cimport _internal_ascontiguousarray
@@ -51,21 +51,22 @@ CUB_sum_support_dtype = {}
 cdef extern from 'cupy_cub.h' nogil:
     ctypedef void* Stream_t 'cudaStream_t'
 
-    void cub_device_reduce(void*, size_t&, void*, void*, int, Stream_t,
+    void cub_device_reduce(void*, size_t&, void*, void*, int64_t, Stream_t,
                            int, int)
     void cub_device_segmented_reduce(void*, size_t&, void*, void*, int, int,
                                      Stream_t, int, int)
-    void cub_device_scan(void*, size_t&, void*, void*, int, Stream_t, int, int)
+    void cub_device_scan(void*, size_t&, void*, void*, int64_t, Stream_t, int,
+                         int)
     void cub_device_histogram_range(void*, size_t&, void*, void*, int, void*,
                                     size_t, Stream_t, int)
     void cub_device_histogram_even(void*, size_t&, void*, void*, int, int, int,
                                    size_t, Stream_t, int)
-    size_t cub_device_reduce_get_workspace_size(void*, void*, int, Stream_t,
+    size_t cub_device_reduce_get_workspace_size(void*, void*, int64_t, Stream_t,
                                                 int, int)
     size_t cub_device_segmented_reduce_get_workspace_size(
         void*, void*, int, int, Stream_t, int, int)
     size_t cub_device_scan_get_workspace_size(
-        void*, void*, int, Stream_t, int, int)
+        void*, void*, int64_t, Stream_t, int, int)
     size_t cub_device_histogram_range_get_workspace_size(
         void*, void*, int, void*, size_t, Stream_t, int)
     size_t cub_device_histogram_even_get_workspace_size(
@@ -138,7 +139,8 @@ def device_reduce(_ndarray_base x, op, tuple reduce_axis, tuple out_axis,
                   out=None, bint keepdims=False):
     cdef _ndarray_base y
     cdef memory.MemoryPointer ws
-    cdef int dtype_id, ndim_out, kv_bytes, x_size, op_code
+    cdef int dtype_id, ndim_out, kv_bytes, op_code
+    cdef int64_t x_size
     cdef size_t ws_size
     cdef void *x_ptr
     cdef void *y_ptr
@@ -184,8 +186,8 @@ def device_reduce(_ndarray_base x, op, tuple reduce_axis, tuple out_axis,
     y_ptr = <void *>y.data.ptr
     dtype_id = common._get_dtype_id(x.dtype)
     s = <Stream_t>stream.get_current_stream_ptr()
-    x_size = <int>x.size
-    ws_size = cub_device_reduce_get_workspace_size(x_ptr, y_ptr, x.size, s,
+    x_size = <int64_t>x.size
+    ws_size = cub_device_reduce_get_workspace_size(x_ptr, y_ptr, x_size, s,
                                                    op, dtype_id)
     ws = memory.alloc(ws_size)
     ws_ptr = <void *>ws.ptr
@@ -273,7 +275,8 @@ def device_segmented_reduce(_ndarray_base x, op, tuple reduce_axis,
 
 def device_scan(_ndarray_base x, op):
     cdef memory.MemoryPointer ws
-    cdef int dtype_id, x_size, op_code
+    cdef int dtype_id, op_code
+    cdef int64_t x_size
     cdef size_t ws_size
     cdef void *x_ptr
     cdef void *ws_ptr
@@ -284,7 +287,7 @@ def device_scan(_ndarray_base x, op):
                          'are supported.')
 
     # determine shape: x is either 1D (with axis=None,0) or ND but ravelled.
-    x_size = <int>x.size
+    x_size = <int64_t>x.size
     if x_size == 0:
         return x
 
@@ -372,10 +375,15 @@ cpdef bint _cub_device_segmented_reduce_axis_compatible(
 
 cdef bint can_use_device_reduce(
         _ndarray_base x, int op, tuple out_axis, dtype=None) except*:
-    return (
-        out_axis is ()
-        and _cub_reduce_dtype_compatible(x.dtype, op, dtype)
-        and x.size <= 0x7fffffff)  # until we resolve cupy/cupy#3309
+    from cupy._core._index_width import INT32_MAX, get_index_width_mode
+    if not (out_axis is () and _cub_reduce_dtype_compatible(x.dtype, op, dtype)):
+        return False
+    # Argmin/argmax still store a 32-bit CUB key.
+    if op in (CUPY_CUB_ARGMIN, CUPY_CUB_ARGMAX) and x.size > INT32_MAX:
+        return False
+    if x.size > INT32_MAX and get_index_width_mode() == '32':
+        return False
+    return True
 
 
 cdef (bint, Py_ssize_t) can_use_device_segmented_reduce(  # noqa: E211
@@ -507,6 +515,9 @@ cpdef cub_scan(_ndarray_base arr, op):
 
     If the specified scan is not possible, None is returned.
     """
+    from cupy._core._index_width import (
+        INT32_MAX, IndexWidthOverflowError, get_index_width_mode)
+
     if op not in (CUPY_CUB_CUMSUM, CUPY_CUB_CUMPROD):
         return None
 
@@ -515,6 +526,10 @@ cpdef cub_scan(_ndarray_base arr, op):
         # cub_device_scan seems buggy for complex128:
         # https://github.com/cupy/cupy/pull/2919#issuecomment-574633590
         return None
+
+    if arr.size > INT32_MAX and get_index_width_mode() == '32':
+        raise IndexWidthOverflowError(
+            'Scan size exceeds int32.max but CUPY_INDEX_WIDTH=32')
 
     cdef int dev_id = device.get_device_id()
     if x_dtype in _cub_support_dtype(False, dev_id):

@@ -51,3 +51,10 @@ class TestScan:
 
         scan(a, a)
         testing.assert_array_equal(a, expect)
+
+    def test_scan_force64_small(self, monkeypatch):
+        monkeypatch.setenv('CUPY_INDEX_WIDTH', '64')
+        a = cupy.ones((32,), dtype=cupy.int64)
+        prefix = cupy.cumsum(a)
+        testing.assert_array_equal(
+            prefix, cupy.arange(1, 33, dtype=cupy.int64))

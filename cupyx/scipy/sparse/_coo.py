@@ -85,8 +85,9 @@ class coo_matrix(sparse_data._data_matrix):
             m, n = arg1
             m, n = int(m), int(n)
             data = cupy.zeros(0, dtype if dtype else 'd')
-            row = cupy.zeros(0, dtype='i')
-            col = cupy.zeros(0, dtype='i')
+            idx_dtype = _sputils.get_index_dtype(maxval=max(m, n, 0))
+            row = cupy.zeros(0, dtype=idx_dtype)
+            col = cupy.zeros(0, dtype=idx_dtype)
             # shape and copy argument is ignored
             shape = (m, n)
             copy = False
@@ -97,8 +98,8 @@ class coo_matrix(sparse_data._data_matrix):
             # Convert scipy.sparse to cupyx.scipy.sparse
             x = arg1.tocoo()
             data = cupy.array(x.data)
-            row = cupy.array(x.row, dtype='i')
-            col = cupy.array(x.col, dtype='i')
+            row = cupy.array(x.row)
+            col = cupy.array(x.col)
             copy = False
             if shape is None:
                 shape = arg1.shape
@@ -146,8 +147,18 @@ class coo_matrix(sparse_data._data_matrix):
                 ' are supported')
 
         data = data.astype(dtype, copy=copy)
-        row = row.astype('i', copy=copy)
-        col = col.astype('i', copy=copy)
+        infer_max = len(data)
+        if shape is not None:
+            infer_max = max(infer_max, int(shape[0]), int(shape[1]))
+        elif len(row) and len(col):
+            infer_max = max(infer_max, int(row.max()) + 1, int(col.max()) + 1)
+        idx_dtype = _sputils.get_index_dtype(
+            arrays=(row, col),
+            maxval=infer_max,
+            check_contents=True,
+        )
+        row = row.astype(idx_dtype, copy=copy)
+        col = col.astype(idx_dtype, copy=copy)
 
         if shape is None:
             if len(row) == 0 or len(col) == 0:
@@ -411,11 +422,13 @@ class coo_matrix(sparse_data._data_matrix):
             col = src_col
         else:
             # TODO(leofang): move the kernels outside this method
-            index = cupy.cumsum(diff, dtype='i')
+            idx_dtype = _sputils.get_index_dtype(
+                arrays=(src_row, src_col), maxval=max(self.row.size, *self.shape))
+            index = cupy.cumsum(diff, dtype=idx_dtype)
             size = int(index[-1]) + 1
             data = cupy.zeros(size, dtype=self.data.dtype)
-            row = cupy.empty(size, dtype='i')
-            col = cupy.empty(size, dtype='i')
+            row = cupy.empty(size, dtype=idx_dtype)
+            col = cupy.empty(size, dtype=idx_dtype)
             if self.data.dtype.kind == 'b':
                 cupy.ElementwiseKernel(
                     'T src_data, int32 src_row, int32 src_col, int32 index',

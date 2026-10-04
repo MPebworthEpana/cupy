@@ -1,5 +1,8 @@
 #include "cupy_cub.h"  // need to make atomicAdd visible to CUB templates early
+#include <cstdint>
 #include <cupy/type_dispatcher.cuh>
+
+using cub_offset_t = int64_t;
 
 #ifndef CUPY_USE_HIP
 #include <cub/device/device_reduce.cuh>
@@ -743,7 +746,7 @@ struct select_min<__half> {
 struct _cub_reduce_sum {
     template <typename T>
     void operator()(void* workspace, size_t& workspace_size, void* x, void* y,
-        int num_items, cudaStream_t s)
+        cub_offset_t num_items, cudaStream_t s)
     {
         DeviceReduce::Sum(workspace, workspace_size, static_cast<T*>(x),
             static_cast<T*>(y), num_items, s);
@@ -767,7 +770,7 @@ struct _cub_segmented_reduce_sum {
 struct _cub_reduce_prod {
     template <typename T>
     void operator()(void* workspace, size_t& workspace_size, void* x, void* y,
-        int num_items, cudaStream_t s)
+        cub_offset_t num_items, cudaStream_t s)
     {
         _multiply product_op;
         // the init value is cast from 1.0f because on host __half can only be
@@ -798,7 +801,7 @@ struct _cub_segmented_reduce_prod {
 struct _cub_reduce_min {
     template <typename T>
     void operator()(void* workspace, size_t& workspace_size, void* x, void* y,
-        int num_items, cudaStream_t s)
+        cub_offset_t num_items, cudaStream_t s)
     {
         if constexpr (std::numeric_limits<T>::has_infinity)
         {
@@ -841,7 +844,7 @@ struct _cub_segmented_reduce_min {
 struct _cub_reduce_max {
     template <typename T>
     void operator()(void* workspace, size_t& workspace_size, void* x, void* y,
-        int num_items, cudaStream_t s)
+        cub_offset_t num_items, cudaStream_t s)
     {
         if constexpr (std::numeric_limits<T>::has_infinity)
         {
@@ -906,7 +909,7 @@ struct _cub_segmented_reduce_max {
 struct _cub_reduce_argmin {
     template <typename T>
     void operator()(void* workspace, size_t& workspace_size, void* x, void* y,
-        int num_items, cudaStream_t s)
+        cub_offset_t num_items, cudaStream_t s)
     {
         DeviceReduce::ArgMin(workspace, workspace_size, static_cast<T*>(x),
             static_cast<KeyValuePair<int, T>*>(y), num_items, s);
@@ -921,7 +924,7 @@ struct _cub_reduce_argmin {
 struct _cub_reduce_argmax {
     template <typename T>
     void operator()(void* workspace, size_t& workspace_size, void* x, void* y,
-        int num_items, cudaStream_t s)
+        cub_offset_t num_items, cudaStream_t s)
     {
         DeviceReduce::ArgMax(workspace, workspace_size, static_cast<T*>(x),
             static_cast<KeyValuePair<int, T>*>(y), num_items, s);
@@ -936,7 +939,7 @@ struct _cub_reduce_argmax {
 struct _cub_inclusive_sum {
     template <typename T>
     void operator()(void* workspace, size_t& workspace_size, void* input, void* output,
-        int num_items, cudaStream_t s)
+        cub_offset_t num_items, cudaStream_t s)
     {
         DeviceScan::InclusiveSum(workspace, workspace_size, static_cast<T*>(input),
             static_cast<T*>(output), num_items, s);
@@ -949,7 +952,7 @@ struct _cub_inclusive_sum {
 struct _cub_inclusive_product {
     template <typename T>
     void operator()(void* workspace, size_t& workspace_size, void* input, void* output,
-        int num_items, cudaStream_t s)
+        cub_offset_t num_items, cudaStream_t s)
     {
         _multiply product_op;
         DeviceScan::InclusiveScan(workspace, workspace_size, static_cast<T*>(input),
@@ -1026,7 +1029,7 @@ struct _cub_histogram_even {
 /* -------- device reduce -------- */
 
 void cub_device_reduce(void* workspace, size_t& workspace_size, void* x, void* y,
-    int num_items, cudaStream_t stream, int op, int dtype_id)
+    cub_offset_t num_items, cudaStream_t stream, int op, int dtype_id)
 {
     switch(op) {
     case CUPY_CUB_SUM:      return dtype_dispatcher(dtype_id, _cub_reduce_sum(),
@@ -1045,7 +1048,7 @@ void cub_device_reduce(void* workspace, size_t& workspace_size, void* x, void* y
     }
 }
 
-size_t cub_device_reduce_get_workspace_size(void* x, void* y, int num_items,
+size_t cub_device_reduce_get_workspace_size(void* x, void* y, cub_offset_t num_items,
     cudaStream_t stream, int op, int dtype_id)
 {
     size_t workspace_size = 0;
@@ -1102,7 +1105,7 @@ size_t cub_device_segmented_reduce_get_workspace_size(void* x, void* y,
 /* -------- device scan -------- */
 
 void cub_device_scan(void* workspace, size_t& workspace_size, void* x, void* y,
-    int num_items, cudaStream_t stream, int op, int dtype_id)
+    cub_offset_t num_items, cudaStream_t stream, int op, int dtype_id)
 {
     switch(op) {
     case CUPY_CUB_CUMSUM:
@@ -1116,7 +1119,7 @@ void cub_device_scan(void* workspace, size_t& workspace_size, void* x, void* y,
     }
 }
 
-size_t cub_device_scan_get_workspace_size(void* x, void* y, int num_items,
+size_t cub_device_scan_get_workspace_size(void* x, void* y, cub_offset_t num_items,
     cudaStream_t stream, int op, int dtype_id)
 {
     size_t workspace_size = 0;

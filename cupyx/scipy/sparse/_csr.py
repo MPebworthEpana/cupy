@@ -626,12 +626,14 @@ def multiply_by_dense(sp, dn):
 
 
 _GET_ROW_ID_ = '''
-__device__ inline int get_row_id(int i, int min, int max, const int *indptr) {
-    int row = (min + max) / 2;
+template <typename I>
+__device__ inline long long get_row_id(
+        long long i, long long min, long long max, const I *indptr) {
+    long long row = (min + max) / 2;
     while (min < max) {
-        if (i < indptr[row]) {
+        if (i < static_cast<long long>(indptr[row])) {
             max = row - 1;
-        } else if (i >= indptr[row + 1]) {
+        } else if (i >= static_cast<long long>(indptr[row + 1])) {
             min = row + 1;
         } else {
             break;
@@ -643,13 +645,14 @@ __device__ inline int get_row_id(int i, int min, int max, const int *indptr) {
 '''
 
 _FIND_INDEX_HOLDING_COL_IN_ROW_ = '''
-__device__ inline int find_index_holding_col_in_row(
-        int row, int col, const int *indptr, const int *indices) {
-    int j_min = indptr[row];
-    int j_max = indptr[row+1] - 1;
+template <typename I>
+__device__ inline long long find_index_holding_col_in_row(
+        long long row, long long col, const I *indptr, const I *indices) {
+    long long j_min = static_cast<long long>(indptr[row]);
+    long long j_max = static_cast<long long>(indptr[row + 1]) - 1;
     while (j_min <= j_max) {
-        int j = (j_min + j_max) / 2;
-        int j_col = indices[j];
+        long long j = (j_min + j_max) / 2;
+        long long j_col = static_cast<long long>(indices[j]);
         if (j_col == col) {
             return j;
         } else if (j_col < col) {
@@ -1128,12 +1131,12 @@ def _cupy_csr2dense(dtype):
         op = "atomicAdd(&OUT[index], DATA);"
 
     return cupy.ElementwiseKernel(
-        'int32 M, int32 N, raw I INDPTR, I INDICES, T DATA, bool C_ORDER',
+        'int64 M, int64 N, raw I INDPTR, I INDICES, T DATA, bool C_ORDER',
         'raw T OUT',
         '''
-        int row = get_row_id(i, 0, M - 1, &(INDPTR[0]));
-        int col = INDICES;
-        int index = C_ORDER ? col + N * row : row + M * col;
+        long long row = get_row_id((long long)i, 0LL, M - 1, &(INDPTR[0]));
+        long long col = INDICES;
+        long long index = C_ORDER ? col + N * row : row + M * col;
         ''' + op,
         'cupyx_scipy_sparse_csr2dense',
         preamble=_GET_ROW_ID_
@@ -1142,6 +1145,7 @@ def _cupy_csr2dense(dtype):
 
 def dense2csr(a):
     from cupyx import cusparse
+    from cupyx.scipy.sparse import _sputils
 
     if a.dtype.char in 'fdFD':
         if cusparse.check_availability('denseToSparse'):
@@ -1150,13 +1154,14 @@ def dense2csr(a):
             return cusparse.dense2csr(a)
     m, n = a.shape
     a = cupy.ascontiguousarray(a)
-    indptr = cupy.zeros(m + 1, dtype=numpy.int32)
-    info = cupy.zeros(m * n + 1, dtype=numpy.int32)
+    idx_dtype = _sputils.get_index_dtype(maxval=max(m, n, m * n))
+    indptr = cupy.zeros(m + 1, dtype=idx_dtype)
+    info = cupy.zeros(m * n + 1, dtype=idx_dtype)
     cupy_dense2csr_step1()(m, n, a, indptr, info)
-    indptr = cupy.cumsum(indptr, dtype=numpy.int32)
-    info = cupy.cumsum(info, dtype=numpy.int32)
+    indptr = cupy.cumsum(indptr, dtype=idx_dtype)
+    info = cupy.cumsum(info, dtype=idx_dtype)
     nnz = int(indptr[-1])
-    indices = cupy.empty(nnz, dtype=numpy.int32)
+    indices = cupy.empty(nnz, dtype=idx_dtype)
     data = cupy.empty(nnz, dtype=a.dtype)
     cupy_dense2csr_step2()(m, n, a, info, indices, data)
     return csr_matrix((data, indices, indptr), shape=(m, n))
@@ -1165,11 +1170,11 @@ def dense2csr(a):
 @cupy._util.memoize(for_each_device=True)
 def cupy_dense2csr_step1():
     return cupy.ElementwiseKernel(
-        'int32 M, int32 N, T A',
+        'int64 M, int64 N, T A',
         'raw I INDPTR, raw I INFO',
         '''
-        int row = i / N;
-        int col = i % N;
+        long long row = i / N;
+        long long col = i % N;
         if (A != static_cast<T>(0)) {
             atomicAdd( &(INDPTR[row + 1]), 1 );
             INFO[i + 1] = 1;
@@ -1181,13 +1186,13 @@ def cupy_dense2csr_step1():
 @cupy._util.memoize(for_each_device=True)
 def cupy_dense2csr_step2():
     return cupy.ElementwiseKernel(
-        'int32 M, int32 N, T A, raw I INFO',
+        'int64 M, int64 N, T A, raw I INFO',
         'raw I INDICES, raw T DATA',
         '''
-        int row = i / N;
-        int col = i % N;
+        long long row = i / N;
+        long long col = i % N;
         if (A != static_cast<T>(0)) {
-            int idx = INFO[i];
+            I idx = INFO[i];
             INDICES[idx] = col;
             DATA[idx] = A;
         }
@@ -1198,16 +1203,16 @@ def cupy_dense2csr_step2():
 @cupy._util.memoize(for_each_device=True)
 def _cupy_csr_diagonal():
     return cupy.ElementwiseKernel(
-        'int32 k, int32 rows, int32 cols, '
+        'int64 k, int64 rows, int64 cols, '
         'raw T data, raw I indptr, raw I indices',
         'T y',
         '''
-        int row = i;
-        int col = i;
+        long long row = i;
+        long long col = i;
         if (k < 0) row -= k;
         if (k > 0) col += k;
         if (row >= rows || col >= cols) return;
-        int j = find_index_holding_col_in_row(row, col,
+        long long j = find_index_holding_col_in_row(row, col,
             &(indptr[0]), &(indices[0]));
         if (j >= 0) {
             y = data[j];

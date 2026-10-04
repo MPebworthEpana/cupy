@@ -5,6 +5,7 @@ import operator
 import numpy
 
 from cupy._core._dtype import get_dtype
+from cupy._core._index_width import choose_index_dtype
 
 supported_dtypes = [get_dtype(x) for x in
                     ('single', 'double', 'csingle', 'cdouble')]
@@ -25,6 +26,10 @@ def get_index_dtype(arrays=(), maxval=None, check_contents=False):
     """Based on input (integer) arrays ``a``, determines a suitable index data
     type that can hold the data in the arrays.
 
+    Honors ``CUPY_INDEX_WIDTH`` (``auto`` / ``32`` / ``64``): auto keeps
+    int32 when values fit, promotes to int64 when they would overflow, and
+    ``32`` raises rather than wrapping.
+
     Args:
         arrays (tuple of array_like):
             Input arrays whose types/contents to check
@@ -37,36 +42,16 @@ def get_index_dtype(arrays=(), maxval=None, check_contents=False):
     Returns:
         dtype: Suitable index data type (int32 or int64)
     """
-
-    int32min = cupy.iinfo(cupy.int32).min
-    int32max = cupy.iinfo(cupy.int32).max
-
-    dtype = cupy.int32
-    if maxval is not None:
-        if maxval > int32max:
-            dtype = cupy.int64
-
+    sizes = () if maxval is None else (maxval,)
     if isinstance(arrays, cupy.ndarray):
         arrays = (arrays,)
-
+    coerced = []
     for arr in arrays:
-        arr = cupy.asarray(arr)
-        if not cupy.can_cast(arr.dtype, cupy.int32):
-            if check_contents:
-                if arr.size == 0:
-                    # a bigger type not needed
-                    continue
-                elif cupy.issubdtype(arr.dtype, cupy.integer):
-                    maxval = arr.max()
-                    minval = arr.min()
-                    if minval >= int32min and maxval <= int32max:
-                        # a bigger type not needed
-                        continue
-
-            dtype = cupy.int64
-            break
-
-    return dtype
+        if arr is None:
+            continue
+        coerced.append(cupy.asarray(arr))
+    return choose_index_dtype(
+        *sizes, arrays=coerced, check_contents=check_contents)
 
 
 def validateaxis(axis):

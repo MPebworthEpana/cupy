@@ -17,6 +17,8 @@
 
 #ifndef CUPY_NO_CUDA
 
+#include <stdint.h>
+
 // for cudaStream_t
 #ifndef CUPY_USE_HIP
 #include <cuda_runtime.h>
@@ -25,14 +27,14 @@
 #define cudaStream_t hipStream_t
 #endif
 
-void cub_device_reduce(void*, size_t&, void*, void*, int, cudaStream_t, int, int);
+void cub_device_reduce(void*, size_t&, void*, void*, int64_t, cudaStream_t, int, int);
 void cub_device_segmented_reduce(void*, size_t&, void*, void*, int, int, cudaStream_t, int, int);
-void cub_device_scan(void*, size_t&, void*, void*, int, cudaStream_t, int, int);
+void cub_device_scan(void*, size_t&, void*, void*, int64_t, cudaStream_t, int, int);
 void cub_device_histogram_range(void*, size_t&, void*, void*, int, void*, size_t, cudaStream_t, int);
 void cub_device_histogram_even(void*, size_t&, void*, void*, int, int, int, size_t, cudaStream_t, int);
-size_t cub_device_reduce_get_workspace_size(void*, void*, int, cudaStream_t, int, int);
+size_t cub_device_reduce_get_workspace_size(void*, void*, int64_t, cudaStream_t, int, int);
 size_t cub_device_segmented_reduce_get_workspace_size(void*, void*, int, int, cudaStream_t, int, int);
-size_t cub_device_scan_get_workspace_size(void*, void*, int, cudaStream_t, int, int);
+size_t cub_device_scan_get_workspace_size(void*, void*, int64_t, cudaStream_t, int, int);
 size_t cub_device_histogram_range_get_workspace_size(void*, void*, int, void*, size_t, cudaStream_t, int);
 size_t cub_device_histogram_even_get_workspace_size(void*, void*, int, int, int, size_t, cudaStream_t, int);
 

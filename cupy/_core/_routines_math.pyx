@@ -4,6 +4,7 @@ import sys
 import numpy
 
 import cupy
+from cupy._core._index_width import index_kernel_ctype
 from cupy._core._reduction import create_reduction_func
 from cupy._core._kernel import create_ufunc, _get_warpsize
 from cupy._core._scalar import get_typename
@@ -495,7 +496,7 @@ cdef _ndarray_base scan(
 
 @_util.memoize(for_each_device=True)
 def _inclusive_batch_scan_kernel(
-        dtype, block_size, op, src_c_cont, out_c_cont):
+        dtype, block_size, op, src_c_cont, out_c_cont, idx_t='int'):
     """return Prefix Sum(Scan) cuda kernel
     for a 2d array over axis 1
     used for scanning over different axes
@@ -518,6 +519,7 @@ def _inclusive_batch_scan_kernel(
     Args:
         dtype: src, dst array type
         block_size: block_size
+        idx_t: C type for batch/row/col indexes (``int`` or ``long long``)
 
     Returns:
          cupy.cuda.Function: cuda function
@@ -529,44 +531,46 @@ def _inclusive_batch_scan_kernel(
     source = string.Template("""
     extern "C" __global__ void ${name}(
         const CArray<${dtype}, 2, ${src_c_cont}> src,
-        CArray<${dtype}, 2, ${out_c_cont}> dst, int batch_size){
-        long long n = src.size();
+        CArray<${dtype}, 2, ${out_c_cont}> dst, ${idx_t} batch_size){
+        ${idx_t} n = src.size();
 
         extern __shared__ ${dtype} temp[];
 
         unsigned int thid = threadIdx.x;
-        unsigned int block = blockIdx.x * blockDim.x;
+        ${idx_t} block = (${idx_t})blockIdx.x * blockDim.x;
 
-        unsigned int pad_batch_size = batch_size;
+        ${idx_t} pad_batch_size = batch_size;
         bool must_copy = true;
 
         if (batch_size & (batch_size -1)) {
-            pad_batch_size = 1 << (32 - __clz(batch_size));
-            must_copy = (thid & (pad_batch_size-1)) < batch_size;
+            if (batch_size <= 0xffffffffu) {
+                pad_batch_size = (${idx_t})1 << (32 - __clz((unsigned int)batch_size));
+            }
+            must_copy = (thid & (unsigned int)(pad_batch_size-1)) < batch_size;
         }
         if (pad_batch_size > ${block_size}) {
-            int blocks_per_batch = (batch_size - 1) / ${block_size} + 1;
+            ${idx_t} blocks_per_batch = (batch_size - 1) / ${block_size} + 1;
             pad_batch_size = ${block_size} * blocks_per_batch;
 
             // Must copy enables for all blocks but the last one in the batch
             bool last_block = (blockIdx.x + 1) % blocks_per_batch == 0;
-            int remaining_batch = batch_size % ${block_size};
+            ${idx_t} remaining_batch = batch_size % ${block_size};
             if (remaining_batch == 0) {
                 remaining_batch = ${block_size};
             }
             must_copy = !last_block || (thid < (remaining_batch));
         }
 
-        int pad_per_batch = pad_batch_size-batch_size;
-        int n_batches_block = ${block_size} / pad_batch_size;
+        ${idx_t} pad_per_batch = pad_batch_size-batch_size;
+        ${idx_t} n_batches_block = ${block_size} / pad_batch_size;
 
-        unsigned int idx0 = thid + block;
+        ${idx_t} idx0 = thid + block;
 
-        int batch_id = idx0 / pad_batch_size;
+        ${idx_t} batch_id = idx0 / pad_batch_size;
         idx0 = idx0 - pad_per_batch * batch_id;
 
-        int row = idx0 / batch_size;
-        int col = idx0 % batch_size;
+        ${idx_t} row = idx0 / batch_size;
+        ${idx_t} col = idx0 % batch_size;
         const ptrdiff_t idx0_idx[] = {row, col};
 
         if(idx0 < n){
@@ -602,30 +606,32 @@ def _inclusive_batch_scan_kernel(
     }
     """).substitute(name=name, dtype=dtype, block_size=block_size,
                     op=op_char[op], identity=identity[op],
-                    src_c_cont=src_c_cont, out_c_cont=out_c_cont)
+                    src_c_cont=src_c_cont, out_c_cont=out_c_cont,
+                    idx_t=idx_t)
     module = compile_with_cache(source)
     return module.get_function(name)
 
 
 @_util.memoize(for_each_device=True)
-def _add_scan_batch_blocked_sum_kernel(dtype, op, block_size, c_cont):
+def _add_scan_batch_blocked_sum_kernel(dtype, op, block_size, c_cont,
+                                       idx_t='int'):
     name = 'cupy_add_scan_blocked_sum_kernel'
     dtype = get_typename(dtype)
     ops = {scan_op.SCAN_SUM: '+', scan_op.SCAN_PROD: '*'}
     source = string.Template("""
     extern "C" __global__ void ${name}(CArray<${dtype}, 2, ${c_cont}> src_dst,
-        int batch_size){
-        long long n = src_dst.size();
+        ${idx_t} batch_size){
+        ${idx_t} n = src_dst.size();
 
         unsigned int thid = threadIdx.x;
-        unsigned int block = blockIdx.x * ${block_size};
+        ${idx_t} block = (${idx_t})blockIdx.x * ${block_size};
 
-        unsigned int idx0 = thid + block;
+        ${idx_t} idx0 = thid + block;
 
         // Respect padding
-        unsigned int row = idx0 / batch_size;
-        unsigned int col = idx0 % batch_size;
-        int my_block = ${block_size} * (col / ${block_size});
+        ${idx_t} row = idx0 / batch_size;
+        ${idx_t} col = idx0 % batch_size;
+        ${idx_t} my_block = ${block_size} * (col / ${block_size});
         const ptrdiff_t dst_idx[] = {row, col};
         const ptrdiff_t src_idx[] = {row, my_block - 1};
 
@@ -638,7 +644,7 @@ def _add_scan_batch_blocked_sum_kernel(dtype, op, block_size, c_cont):
         }
     }
     """).substitute(name=name, dtype=dtype, op=ops[op], block_size=block_size,
-                    c_cont=c_cont)
+                    c_cont=c_cont, idx_t=idx_t)
     module = compile_with_cache(source)
     return module.get_function(name)
 
@@ -657,11 +663,12 @@ cdef _ndarray_base _batch_scan_op(
         blocks_per_batch = (batch_size - 1) // block_size + 1
         padded_bs = block_size * blocks_per_batch
     padded_size = a.size // batch_size * padded_bs
+    idx_t = index_kernel_ctype(None, a.size, batch_size, padded_size)
 
     cdef int src_cont = int(a.flags.c_contiguous)
     cdef int out_cont = int(out.flags.c_contiguous)
     kern_scan = _inclusive_batch_scan_kernel(a.dtype, block_size, op,
-                                             src_cont, out_cont)
+                                             src_cont, out_cont, idx_t)
     kern_scan(grid=((padded_size - 1) // (block_size) + 1,),
               block=(block_size,),
               args=(a, out, batch_size),
@@ -670,7 +677,7 @@ cdef _ndarray_base _batch_scan_op(
         blocked_sum = out[:, block_size-1::block_size]
         _batch_scan_op(blocked_sum, op, blocked_sum)
         kern_add = _add_scan_batch_blocked_sum_kernel(
-            out.dtype, op, block_size, out_cont)
+            out.dtype, op, block_size, out_cont, idx_t)
         kern_add(
             grid=((out.size - 1) // (block_size) + 1,),
             block=(block_size,),
